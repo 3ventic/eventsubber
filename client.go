@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -19,9 +20,16 @@ import (
 )
 
 type Client interface {
+	// Subscribe creates a new subscription
 	Subscribe(ctx context.Context, sub *models.SubscriptionRequest) (*models.Subscription, error)
+
+	// Subscriptions returns the list of active subscriptions on this client
 	Subscriptions(ctx context.Context) ([]*models.Subscription, error)
-	VerifySignature(messageId, timestamp, body, signature string) bool
+
+	// VerifySignature verifies the signature on an eventsub request
+	VerifySignature(headers http.Header, requestBody []byte) bool
+
+	// Unsubscribe removes an existing subscription
 	Unsubscribe(ctx context.Context, id string) error
 }
 
@@ -68,12 +76,19 @@ type client struct {
 	secret       string
 }
 
-func (c *client) VerifySignature(messageId, timestamp, body, signature string) bool {
-	hmacMessage := messageId + timestamp + body
+func (c *client) VerifySignature(headers http.Header, requestBody []byte) bool {
+	messageId := []byte(headers.Get("Twitch-Eventsub-Message-Id"))
+	timestamp := []byte(headers.Get("Twitch-Eventsub-Message-Timestamp"))
+	signature := headers.Get("Twitch-Eventsub-Message-Signature")
+
+	hmacMessage := make([]byte, 0, len(messageId)+len(timestamp)+len(requestBody))
+	hmacMessage = append(hmacMessage, messageId...)
+	hmacMessage = append(hmacMessage, timestamp...)
+	hmacMessage = append(hmacMessage, requestBody...)
 
 	signatureParts := strings.Split(signature, "=")
 	algo := signatureParts[0]
-	givenHash := signatureParts[1]
+	givenHash := []byte(signatureParts[1])
 
 	hasher := func() hash.Hash {
 		switch algo {
@@ -85,11 +100,13 @@ func (c *client) VerifySignature(messageId, timestamp, body, signature string) b
 	}
 
 	h := hmac.New(hasher, []byte(c.secret))
-	h.Write([]byte(hmacMessage))
+	h.Write(hmacMessage)
+	hsum := h.Sum(nil)
 
-	calculatedHash := hex.EncodeToString(h.Sum(nil))
+	calculatedHash := make([]byte, hex.EncodedLen(len(hsum)))
+	hex.Encode(calculatedHash, hsum)
 
-	return givenHash == calculatedHash
+	return subtle.ConstantTimeCompare(calculatedHash, givenHash) == 1
 }
 
 func (c *client) Subscriptions(ctx context.Context) ([]*models.Subscription, error) {

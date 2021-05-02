@@ -30,7 +30,7 @@ func (s *h) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	}
 	log.Printf("got request from %s: %s", req.UserAgent(), string(b))
 
-	if !s.Es.VerifySignature(req.Header.Get("Twitch-Eventsub-Message-Id"), req.Header.Get("Twitch-Eventsub-Message-Timestamp"), string(b), req.Header.Get("Twitch-Eventsub-Message-Signature")) {
+	if !s.Es.VerifySignature(req.Header, b) {
 		res.WriteHeader(401)
 		log.Print("unauthorized")
 		return
